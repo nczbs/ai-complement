@@ -2,8 +2,8 @@ name: Build and Release SweepAI JetBrains Plugin
 
 on:
   workflow_dispatch:
-    push:
-      branches: [ main, dev ]
+  push:
+    branches: [ main, dev ]
 
 permissions:
   contents: write

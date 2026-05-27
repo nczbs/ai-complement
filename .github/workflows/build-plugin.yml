@@ -2,6 +2,8 @@ name: Build and Release SweepAI JetBrains Plugin
 
 on:
   workflow_dispatch:
+    push:
+      branches: [ main, dev ]
 
 permissions:
   contents: write
@@ -36,11 +38,8 @@ jobs:
           chmod +x ./gradlew
           mkdir -p untitled
 
-          # 当前 IDEA 是 IU-261.24374.151，所以插件 until-build 必须覆盖 261.*
+          # 只改插件允许安装范围，不改 intellijIdeaCommunity("2025.1") 构建平台
           perl -0pi -e 's/untilBuild\.set\("253\.\*"\)/untilBuild.set("261.*")/g' build.gradle.kts
-
-          # 尽量按 IDEA 2026.1.2 平台构建，而不是只改 plugin.xml
-          perl -0pi -e 's/intellijIdeaCommunity\("2025\.1"\)/intellijIdeaCommunity("2026.1.2")/g' build.gradle.kts
 
           cat >> gradle.properties <<'EOF'
           org.gradle.configuration-cache=false
@@ -49,8 +48,8 @@ jobs:
           org.gradle.workers.max=2
           EOF
 
-          echo "===== patched build.gradle.kts compatibility lines ====="
-          grep -n 'untilBuild.set\|intellijIdeaCommunity' build.gradle.kts
+          echo "===== patched compatibility lines ====="
+          grep -n 'untilBuild.set\|intellijIdeaCommunity\|intellijIdea(' build.gradle.kts
 
       - name: Build plugin ZIP
         run: ./gradlew --no-daemon --no-configuration-cache buildPlugin

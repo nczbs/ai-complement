@@ -12,6 +12,9 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: test
+
+
       - name: Checkout SweepAI JetBrains plugin repo
         uses: actions/checkout@v4
         with:

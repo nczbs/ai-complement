@@ -1,0 +1,106 @@
+name: Build and Release SweepAI JetBrains Plugin
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-plugin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout SweepAI JetBrains plugin repo
+        uses: actions/checkout@v4
+        with:
+          repository: sweepai/jetbrains_plugin
+          ref: main
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Patch plugin compatibility for IDEA 2026.1
+        shell: bash
+        run: |
+          chmod +x ./gradlew
+          mkdir -p untitled
+
+          # 当前 IDEA 是 IU-261.24374.151，所以插件 until-build 必须覆盖 261.*
+          perl -0pi -e 's/untilBuild\.set\("253\.\*"\)/untilBuild.set("261.*")/g' build.gradle.kts
+
+          # 尽量按 IDEA 2026.1.2 平台构建，而不是只改 plugin.xml
+          perl -0pi -e 's/intellijIdeaCommunity\("2025\.1"\)/intellijIdeaCommunity("2026.1.2")/g' build.gradle.kts
+
+          cat >> gradle.properties <<'EOF'
+          org.gradle.configuration-cache=false
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          kotlin.daemon.jvmargs=-Xmx2g
+          org.gradle.workers.max=2
+          EOF
+
+          echo "===== patched build.gradle.kts compatibility lines ====="
+          grep -n 'untilBuild.set\|intellijIdeaCommunity' build.gradle.kts
+
+      - name: Build plugin ZIP
+        run: ./gradlew --no-daemon --no-configuration-cache buildPlugin
+
+      - name: Prepare release ZIP
+        shell: bash
+        run: |
+          ls -lah build/distributions
+
+          ZIP_FILE="$(find build/distributions -maxdepth 1 -name '*.zip' | head -n 1)"
+          test -f "$ZIP_FILE"
+
+          cp "$ZIP_FILE" sweepai-plugin-install-this-for-IDEA-2026.1.zip
+
+          echo "===== release zip content ====="
+          unzip -l sweepai-plugin-install-this-for-IDEA-2026.1.zip | head -80
+
+      - name: Verify plugin.xml compatibility
+        shell: bash
+        run: |
+          ZIP="sweepai-plugin-install-this-for-IDEA-2026.1.zip"
+
+          rm -f /tmp/plugin.jar /tmp/plugin.xml
+
+          while read -r JAR_PATH; do
+            unzip -p "$ZIP" "$JAR_PATH" > /tmp/plugin.jar || true
+
+            if unzip -p /tmp/plugin.jar META-INF/plugin.xml > /tmp/plugin.xml 2>/dev/null; then
+              echo "Found plugin.xml in $JAR_PATH"
+              break
+            fi
+          done < <(zipinfo -1 "$ZIP" | grep '\.jar$')
+
+          test -s /tmp/plugin.xml
+
+          echo "===== patched plugin.xml idea-version ====="
+          grep -n 'idea-version' /tmp/plugin.xml
+
+          grep 'until-build="261.\*"' /tmp/plugin.xml
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="sweepai-plugin-idea-2026.1-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          SOURCE_SHA="$(git rev-parse --short HEAD)"
+
+          gh release create "$TAG" sweepai-plugin-install-this-for-IDEA-2026.1.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "SweepAI JetBrains Plugin for IDEA 2026.1 ${TAG}" \
+            --notes "Install this ZIP directly in JetBrains IDE 2026.1.x. Built from sweepai/jetbrains_plugin main, source commit: ${SOURCE_SHA}" \
+            --prerelease
